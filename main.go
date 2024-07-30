@@ -2,7 +2,6 @@ package main
 
 import (
 	controller "golang-speakbackend/controllers"
-	middleware "golang-speakbackend/middleware"
 	routes "golang-speakbackend/routes"
 	"log"
 	"os"
@@ -54,7 +53,7 @@ func main() {
 
 	// Private routes
 	privateRoutes := router.Group("/")
-	privateRoutes.Use(middleware.Authentication())
+	// privateRoutes.Use(middleware.Authentication())
 	{
 		routes.UserRoutes(privateRoutes)
 		routes.ExerciseRoutes(privateRoutes)
