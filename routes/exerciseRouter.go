@@ -2,7 +2,7 @@ package routes
 
 import(
 	controller "golang-speakbackend/controllers"
-
+	
 	"github.com/gin-gonic/gin"
 )
 

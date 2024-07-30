@@ -20,30 +20,6 @@ import (
 
 var userCollection *mongo.Collection = database.OpenCollection(database.Client, "user")
 
-// func UploadProfilePicture(s3Session ) gin.HandlerFunc {
-// 	return func(c *gin.Context) {
-// 		file, header, err := c.Request.FormFile("profile_picture")
-// 		if err != nil {
-// 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid profile picture upload"})
-// 			return
-// 		}
-// 		defer file.Close()
-
-// 		fileName := fmt.Sprintf("profile-picture/%s-%s", c.Param("user_id"), header.Filename)
-
-// 		var buf bytes.Buffer
-// 		io.Copy(&buf, file)
-// 		_, err = s3Session.PutObject(&s3.PutObjectInput{
-// 			Bucket:        aws.String(os.Getenv("BUCKET_NAME")),
-// 			Key:           aws.String(fileName),
-// 			Body:          bytes.NewReader(buf.Bytes()),
-// 			ContentLength: aws.Int64(int64(buf.Len())),
-// 			ContentType:   aws.String(http.DetectContentType(buf.Bytes())),
-// 			ACL:           aws.String("public-read"),
-// 		})
-// 	}
-// }
-
 func GetUser() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
