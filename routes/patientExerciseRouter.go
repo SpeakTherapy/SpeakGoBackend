@@ -1,0 +1,17 @@
+package routes
+
+import(
+	controller "golang-speakbackend/controllers"
+
+	"github.com/gin-gonic/gin"
+)
+
+func PatientExerciseRoutes(incomingRoutes *gin.RouterGroup){
+	incomingRoutes.GET("/patientexercise/:id", controller.GetPatientExercise())
+	// incomingRoutes.GET("/patientexercises", controller.GetPatientExercises())
+	incomingRoutes.POST("/patientexercise", controller.CreatePatientExercise())
+	incomingRoutes.PUT("/patientexercise/:id", controller.UpdatePatientExercise())
+	incomingRoutes.DELETE("/patientexercise/:id", controller.DeletePatientExercise())
+
+	incomingRoutes.GET("/patientexercises/:patient_id", controller.GetPatientExercisesByUser())
+}
