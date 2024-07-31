@@ -62,7 +62,7 @@ func UploadRecording() gin.HandlerFunc {
 			return
 		}
 
-		videoURL := fmt.Sprintf("https://peakspeak.nyc3.cdn.digitaloceanspaces.com/recordings/%s_%d.%s", patientExerciseID, time.Now().Unix(), fileExtension)
+		videoURL := fmt.Sprintf("https://peakspeak.nyc3.cdn.digitaloceanspaces.com/recordings/%s.%s", patientExerciseID, fileExtension)
 		update := bson.D{
 			{Key: "$set", Value: bson.D{
 				{Key: "recording", Value: videoURL},
