@@ -66,10 +66,14 @@ func UploadProfile() gin.HandlerFunc {
 			return
 		}
 
+		// Generate a unique cache buster
+		cacheBuster := time.Now().UnixNano()
+
 		// Update the profile image URL in the database
+		profileImageURL := fmt.Sprintf("https://peakspeak.nyc3.cdn.digitaloceanspaces.com/profile/%s.%s?cb=%d", userID, fileExtension, cacheBuster)
 		update := bson.D{
 			{Key: "$set", Value: bson.D{
-				{Key: "profile_image", Value: "https://peakspeak.nyc3.cdn.digitaloceanspaces.com/profile/" + userID + "." + fileExtension},
+				{Key: "profile_image", Value: profileImageURL},
 			}},
 		}
 
@@ -81,7 +85,7 @@ func UploadProfile() gin.HandlerFunc {
 
 		fmt.Printf("File uploaded to, %s\n", aws.StringValue(&result.Location))
 
-		c.JSON(http.StatusOK, gin.H{"message": "File uploaded successfully", "location": "https://peakspeak.nyc3.cdn.digitaloceanspaces.com/profile/" + userID + "." + fileExtension})
+		c.JSON(http.StatusOK, gin.H{"message": "File uploaded successfully", "location": profileImageURL})
 	}
 }
 
