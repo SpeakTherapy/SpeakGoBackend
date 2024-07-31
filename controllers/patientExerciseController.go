@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"golang-speakbackend/database"
+	"golang-speakbackend/helpers"
 	"golang-speakbackend/models"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -15,6 +19,67 @@ import (
 )
 
 var patientExerciseCollection *mongo.Collection = database.OpenCollection(database.Client, "patient_exercise")
+
+func UploadRecording() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel()
+
+		patientExerciseID := c.Param("patient_exercise_id")
+		var patientExercise models.PatientExercise
+		err := patientExerciseCollection.FindOne(ctx, bson.M{"patient_exercise_id": patientExerciseID}).Decode(&patientExercise)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Patient exercise not found"})
+			return
+		}
+
+		c.Request.ParseMultipartForm(100 << 20) // 100 MB
+		file, handler, err := c.Request.FormFile("file")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Error occurred while uploading file"})
+			return
+		}
+		defer file.Close()
+		fmt.Printf("Uploaded File: %+v\n", handler.Filename)
+		fmt.Printf("File Size: %+v\n", handler.Size)
+		fmt.Printf("MIME Header: %+v\n", handler.Header)
+
+		fileExtension := strings.Split(handler.Filename, ".")[1]
+
+		sess := helpers.GetS3Session()
+		uploader := s3manager.NewUploader(sess)
+
+		// Upload the file to S3
+		result, err := uploader.Upload(&s3manager.UploadInput{
+			Bucket: aws.String("peakspeak"),
+			// Key should be videos/userID.timestamp.extension
+			Key:  aws.String(fmt.Sprintf("recordings/%s_%d.%s", patientExerciseID, time.Now().Unix(), fileExtension)),
+			Body: file,
+			ACL:  aws.String("public-read"), // Set the ACL to public-read
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to upload file, %v", err)})
+			return
+		}
+
+		videoURL := fmt.Sprintf("https://peakspeak.nyc3.cdn.digitaloceanspaces.com/recordings/%s_%d.%s", patientExerciseID, time.Now().Unix(), fileExtension)
+		update := bson.D{
+			{Key: "$set", Value: bson.D{
+				{Key: "recording", Value: videoURL},
+			}},
+		}
+
+		_, err = patientExerciseCollection.UpdateOne(ctx, bson.M{"patient_exercise_id": patientExerciseID}, update)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error while updating profile image"})
+			return
+		}
+
+		fmt.Printf("File uploaded to, %s\n", aws.StringValue(&result.Location))
+
+		c.JSON(http.StatusOK, gin.H{"message": "File uploaded successfully", "location": videoURL})
+	}
+}
 
 func GetPatientExercise() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -87,7 +152,6 @@ func GetPatientExercisesByUser() gin.HandlerFunc {
 		c.JSON(http.StatusOK, detailedExercises)
 	}
 }
-
 
 func ExercisesByPatient(id string) (PatientExercises []primitive.M, err error) {
 	var ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
@@ -256,14 +320,14 @@ func CreatePatientExercise() gin.HandlerFunc {
 			created_at, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
 			updated_at, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
 			patientExercise := models.PatientExercise{
-				ID:                primitive.NewObjectID(),
-				PatientID:         &requestBody.PatientID,
-				TherapistID:       &requestBody.TherapistID,
-				ExerciseID:        &exerciseID,
-				Status:            "pending",
-				Recording:         "",
-				CreatedAt:         created_at,
-				UpdatedAt:         updated_at,
+				ID:          primitive.NewObjectID(),
+				PatientID:   &requestBody.PatientID,
+				TherapistID: &requestBody.TherapistID,
+				ExerciseID:  &exerciseID,
+				Status:      "pending",
+				Recording:   "",
+				CreatedAt:   created_at,
+				UpdatedAt:   updated_at,
 			}
 			patientExercise.PatientExerciseID = patientExercise.ID.Hex()
 			patientExercises = append(patientExercises, patientExercise)
@@ -359,6 +423,6 @@ func DeletePatientExercise() gin.HandlerFunc {
 		// 	return
 		// }
 
-		c.JSON(http.StatusOK, gin.H{"message": "Deleted exercise successfully"})	
+		c.JSON(http.StatusOK, gin.H{"message": "Deleted exercise successfully"})
 	}
 }
