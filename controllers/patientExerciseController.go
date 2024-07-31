@@ -53,7 +53,7 @@ func UploadRecording() gin.HandlerFunc {
 		result, err := uploader.Upload(&s3manager.UploadInput{
 			Bucket: aws.String("peakspeak"),
 			// Key should be videos/userID.timestamp.extension
-			Key:  aws.String(fmt.Sprintf("recordings/%s_%d.%s", patientExerciseID, time.Now().Unix(), fileExtension)),
+			Key:  aws.String(fmt.Sprintf("recordings/%s.%s", patientExerciseID, fileExtension)),
 			Body: file,
 			ACL:  aws.String("public-read"), // Set the ACL to public-read
 		})
