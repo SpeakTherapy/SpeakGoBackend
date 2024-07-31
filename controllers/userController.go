@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"golang-speakbackend/database"
 	"golang-speakbackend/helpers"
 	"golang-speakbackend/models"
@@ -9,8 +10,11 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -19,6 +23,67 @@ import (
 )
 
 var userCollection *mongo.Collection = database.OpenCollection(database.Client, "user")
+
+func UploadProfile() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+
+		userID := c.Param("user_id")
+		var user models.User
+		err := userCollection.FindOne(ctx, bson.M{"user_id": userID}).Decode(&user)
+		defer cancel()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
+			return
+		}
+
+		c.Request.ParseMultipartForm(10 << 20) // 10 MB
+		file, handler, err := c.Request.FormFile("file")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Error occurred while uploading file"})
+			return
+		}
+		defer file.Close()
+		fmt.Printf("Uploaded File: %+v\n", handler.Filename)
+		fmt.Printf("File Size: %+v\n", handler.Size)
+		fmt.Printf("MIME Header: %+v\n", handler.Header)
+		// split file name by period and get the last element which is the extension
+		fileExtension := strings.Split(handler.Filename, ".")[1]
+
+		sess := helpers.GetS3Session()
+		uploader := s3manager.NewUploader(sess)
+
+		// Upload the file to S3
+		result, err := uploader.Upload(&s3manager.UploadInput{
+			Bucket: aws.String("peakspeak"),
+			// Key should be profile/userID.extension
+			Key:  aws.String("profile/" + userID + "." + fileExtension),
+			Body: file,
+			ACL:  aws.String("public-read"), // Set the ACL to public-read
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to upload file, %v", err)})
+			return
+		}
+
+		// Update the profile image URL in the database
+		update := bson.D{
+			{Key: "$set", Value: bson.D{
+				{Key: "profile_image", Value: "https://peakspeak.nyc3.cdn.digitaloceanspaces.com/profile/" + userID + "." + fileExtension},
+			}},
+		}
+
+		_, err = userCollection.UpdateOne(ctx, bson.M{"user_id": userID}, update)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error while updating profile image"})
+			return
+		}
+
+		fmt.Printf("File uploaded to, %s\n", aws.StringValue(&result.Location))
+
+		c.JSON(http.StatusOK, gin.H{"message": "File uploaded successfully", "location": "https://peakspeak.nyc3.cdn.digitaloceanspaces.com/profile/" + userID + "." + fileExtension})
+	}
+}
 
 func GetUser() gin.HandlerFunc {
 	return func(c *gin.Context) {

@@ -6,16 +6,16 @@ import (
 	"log"
 	"os"
 
+	// "github.com/aws/aws-sdk-go/aws"
+	// "github.com/aws/aws-sdk-go/aws/credentials"
+	// "github.com/aws/aws-sdk-go/aws/session"
+	// "github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
 // var exerciseCollection *mongo.Collection = database.OpenCollection(database.Client, "exercise")
-
-// var b2Client *b2.Client
-// var b2Bucket *b2.Bucket
-// var s3Session *s3.S3
 
 func init() {
 	err := godotenv.Load()

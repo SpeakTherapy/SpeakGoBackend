@@ -15,5 +15,6 @@ func UserRoutes(incomingRoutes *gin.RouterGroup){
 	incomingRoutes.DELETE("/user/:user_id", controller.DeleteUser())
 	incomingRoutes.POST("/user/linkToTherapist/:user_id", controller.LinkToTherapist())
 	incomingRoutes.GET("/patients/:therapist_id", controller.GetPatients())
+	incomingRoutes.POST("/user/uploadprofile/:user_id", controller.UploadProfile())
 	// incomingRoutes.POST("/user/refreshtoken", controller.RefreshToken())
 }
