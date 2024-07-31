@@ -63,9 +63,12 @@ func UploadRecording() gin.HandlerFunc {
 		}
 
 		videoURL := fmt.Sprintf("https://peakspeak.nyc3.cdn.digitaloceanspaces.com/recordings/%s.%s", patientExerciseID, fileExtension)
+		updatedAt, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
 		update := bson.D{
 			{Key: "$set", Value: bson.D{
 				{Key: "recording", Value: videoURL},
+				{Key: "updated_at", Value: updatedAt},
+				{Key: "status", Value: "completed"},
 			}},
 		}
 
