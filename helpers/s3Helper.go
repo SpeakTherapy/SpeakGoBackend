@@ -7,17 +7,17 @@ import (
     "github.com/aws/aws-sdk-go/aws"
     "github.com/aws/aws-sdk-go/aws/credentials"
     "github.com/aws/aws-sdk-go/aws/session"
-    "github.com/joho/godotenv"
+    // "github.com/joho/godotenv"
 )
 
 var s3Session *session.Session
 var kmsSession *session.Session
 
 func init() {
-    err := godotenv.Load()
-    if err != nil {
-        log.Fatalf("Error loading .env file")
-    }
+    // err := godotenv.Load()
+    // if err != nil {
+    //     log.Fatalf("Error loading .env file")
+    // }
 
     key := os.Getenv("SPACES_KEY")
     secret := os.Getenv("SPACES_SECRET")
