@@ -3,7 +3,7 @@ package main
 import (
 	controller "golang-speakbackend/controllers"
 	routes "golang-speakbackend/routes"
-	"log"
+	// "log"
 	"os"
 
 	// "github.com/aws/aws-sdk-go/aws"
@@ -12,17 +12,17 @@ import (
 	// "github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
+	// "github.com/joho/godotenv"
 )
 
 // var exerciseCollection *mongo.Collection = database.OpenCollection(database.Client, "exercise")
 
-func init() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatalf("Error loading .env file")
-	}
-}
+// func init() {
+// 	err := godotenv.Load()
+// 	if err != nil {
+// 		log.Fatalf("Error loading .env file")
+// 	}
+// }
 
 func main() {
 	port := os.Getenv("PORT")
