@@ -14,4 +14,5 @@ func PatientExerciseRoutes(incomingRoutes *gin.RouterGroup){
 	incomingRoutes.DELETE("/patientexercise/:id", controller.DeletePatientExercise())
 	incomingRoutes.POST("/patientexercise/uploadrecording/:patient_exercise_id", controller.UploadRecording())
 	incomingRoutes.GET("/patientexercises/:patient_id", controller.GetPatientExercisesByUser())
+	incomingRoutes.POST("/getuploadurl/:patient_exercise_id", controller.GetUploadURL())
 }
