@@ -21,6 +21,8 @@ func init() {
 
     key := os.Getenv("SPACES_KEY")
     secret := os.Getenv("SPACES_SECRET")
+	awsKey := os.Getenv("AWS_ACCESS")
+	awsSecret := os.Getenv("AWS_SECRET")
 
     // Setup DigitalOcean Spaces session
     s3Config := &aws.Config{
@@ -39,6 +41,7 @@ func init() {
 
     // Setup AWS KMS session
     kmsConfig := &aws.Config{
+		Credentials: credentials.NewStaticCredentials(awsKey, awsSecret, ""),
         Region: aws.String("us-east-2"), // KMS key region
     }
 

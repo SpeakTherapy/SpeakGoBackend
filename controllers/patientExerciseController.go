@@ -7,6 +7,7 @@ import (
 	"golang-speakbackend/database"
 	"golang-speakbackend/helpers"
 	"golang-speakbackend/models"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -26,87 +27,88 @@ import (
 var patientExerciseCollection *mongo.Collection = database.OpenCollection(database.Client, "patient_exercise")
 
 func wrapKey(key, kmsKeyID string) (string, error) {
-    svc := kms.New(helpers.GetKMSSession())
+	svc := kms.New(helpers.GetKMSSession())
 
-    input := &kms.EncryptInput{
-        KeyId:     aws.String(kmsKeyID),
-        Plaintext: []byte(key),
-    }
+	input := &kms.EncryptInput{
+		KeyId:     aws.String(kmsKeyID),
+		Plaintext: []byte(key),
+	}
 
-    result, err := svc.Encrypt(input)
-    if err != nil {
-        return "", err
-    }
+	result, err := svc.Encrypt(input)
+	if err != nil {
+		log.Printf("Error encrypting key: %v", err)
+		return "", err
+	}
 
-    return base64.StdEncoding.EncodeToString(result.CiphertextBlob), nil
+	return base64.StdEncoding.EncodeToString(result.CiphertextBlob), nil
 }
 
 func GetUploadURL() gin.HandlerFunc {
-    return func(c *gin.Context) {
-        var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
-        defer cancel()
+	return func(c *gin.Context) {
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel()
 
-        patientExerciseID := c.Param("patient_exercise_id")
+		patientExerciseID := c.Param("patient_exercise_id")
 
-        type RequestBody struct {
-            AESKey string `json:"aes_key"`
-        }
+		type RequestBody struct {
+			AESKey string `json:"aes_key"`
+		}
 
-        var requestBody RequestBody
-        if err := c.BindJSON(&requestBody); err != nil {
-            c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
-            return
-        }
+		var requestBody RequestBody
+		if err := c.BindJSON(&requestBody); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+			return
+		}
 
-        // Wrap the AES key using AWS KMS
-        kmsKeyID := os.Getenv("KMS_KEY_ID")
-        wrappedKey, err := wrapKey(requestBody.AESKey, kmsKeyID)
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to wrap encryption key"})
-            return
-        }
+		// Wrap the AES key using AWS KMS
+		kmsKeyID := os.Getenv("KMS_KEY_ID")
+		wrappedKey, err := wrapKey(requestBody.AESKey, kmsKeyID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to wrap encryption key"})
+			return
+		}
 
-        // Generate signed URL
-        sess := helpers.GetS3Session()
-        svc := s3.New(sess)
-        req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-            Bucket: aws.String("peakspeak"),
-            Key:    aws.String(fmt.Sprintf("recordings/%s.mp4", patientExerciseID)),
-            ACL:    aws.String("private"),
-        })
-        signedURL, err := req.Presign(15 * time.Minute)
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate signed URL"})
-            return
-        }
+		// Generate signed URL
+		sess := helpers.GetS3Session()
+		svc := s3.New(sess)
+		req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
+			Bucket: aws.String("peakspeak"),
+			Key:    aws.String(fmt.Sprintf("recordings/%s.mp4", patientExerciseID)),
+			ACL:    aws.String("private"),
+		})
+		signedURL, err := req.Presign(15 * time.Minute)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate signed URL"})
+			return
+		}
 
-        // Store the wrapped key and other metadata
+		// Store the wrapped key and other metadata
 		updatedAt, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
-        update := bson.D{
-            {Key: "$set", Value: bson.D{
-                {Key: "wrapped_key", Value: wrappedKey},
-                {Key: "updated_at", Value: updatedAt},
-            }},
-        }
+		update := bson.D{
+			{Key: "$set", Value: bson.D{
+				{Key: "wrapped_key", Value: wrappedKey},
+				{Key: "updated_at", Value: updatedAt},
+			}},
+		}
 
 		upsert := true
 
 		opt := options.UpdateOptions{
 			Upsert: &upsert,
 		}
-        _, err = patientExerciseCollection.UpdateOne(
-			ctx, 
-			bson.M{"patient_exercise_id": patientExerciseID}, 
-			update, 
+		_, err = patientExerciseCollection.UpdateOne(
+			ctx,
+			bson.M{"patient_exercise_id": patientExerciseID},
+			update,
 			&opt,
 		)
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update patient exercise with wrapped key"})
-            return
-        }
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update patient exercise with wrapped key"})
+			return
+		}
 
-        c.JSON(http.StatusOK, gin.H{"upload_url": signedURL})
-    }
+		c.JSON(http.StatusOK, gin.H{"upload_url": signedURL})
+	}
 }
 
 func UploadRecording() gin.HandlerFunc {
