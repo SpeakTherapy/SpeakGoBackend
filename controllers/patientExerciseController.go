@@ -13,10 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/kms"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -27,14 +26,14 @@ import (
 var patientExerciseCollection *mongo.Collection = database.OpenCollection(database.Client, "patient_exercise")
 
 func wrapKey(key, kmsKeyID string) (string, error) {
-	svc := kms.New(helpers.GetKMSSession())
+	kmsClient := helpers.GetKMSClient()
 
 	input := &kms.EncryptInput{
 		KeyId:     aws.String(kmsKeyID),
 		Plaintext: []byte(key),
 	}
 
-	result, err := svc.Encrypt(input)
+	result, err := kmsClient.Encrypt(context.Background(), input)
 	if err != nil {
 		log.Printf("Error encrypting key: %v", err)
 		return "", err
@@ -44,79 +43,76 @@ func wrapKey(key, kmsKeyID string) (string, error) {
 }
 
 func GetUploadURL() gin.HandlerFunc {
-    return func(c *gin.Context) {
-        var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
-        defer cancel()
+	return func(c *gin.Context) {
+		s3Client := helpers.GetS3Client()
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel()
 
-        patientExerciseID := c.Param("patient_exercise_id")
+		patientExerciseID := c.Param("patient_exercise_id")
 
-        type RequestBody struct {
-            AESKey string `json:"aes_key"`
-        }
+		type RequestBody struct {
+			AESKey string `json:"aes_key"`
+		}
 
-        var requestBody RequestBody
-        if err := c.BindJSON(&requestBody); err != nil {
-            c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
-            return
-        }
+		var requestBody RequestBody
+		if err := c.BindJSON(&requestBody); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+			return
+		}
 
-        // Wrap the AES key using AWS KMS
-        kmsKeyID := os.Getenv("KMS_KEY_ID")
-        wrappedKey, err := wrapKey(requestBody.AESKey, kmsKeyID)
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to wrap encryption key"})
-            return
-        }
+		// Wrap the AES key using AWS KMS
+		kmsKeyID := os.Getenv("KMS_KEY_ID")
+		wrappedKey, err := wrapKey(requestBody.AESKey, kmsKeyID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to wrap encryption key"})
+			return
+		}
 
-        // Generate signed URL with necessary headers
-        sess := helpers.GetS3Session()
-        svc := s3.New(sess)
+		// Generate signed URL with necessary headers
+		presignClient := s3.NewPresignClient(s3Client)
 
-        req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-            Bucket: aws.String("peakspeak"),
-            Key:    aws.String(fmt.Sprintf("recordings/%s.mp4", patientExerciseID)),
-            ACL:    aws.String("private"),
-        })
+		presignedURL, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String("peakspeak"),
+			Key:    aws.String(fmt.Sprintf("recordings/%s.mp4", patientExerciseID)),
+		}, s3.WithPresignExpires(15*time.Minute))
 
-        // Generate the signed URL
-        signedURL, err := req.Presign(15 * time.Minute)
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate signed URL"})
-            return
-        }
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate signed URL"})
+			return
+		}
 
-        // Store the wrapped key and other metadata
-        updatedAt, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
-        update := bson.D{
-            {Key: "$set", Value: bson.D{
-                {Key: "wrapped_key", Value: wrappedKey},
-                {Key: "updated_at", Value: updatedAt},
-            }},
-        }
+		// Store the wrapped key and other metadata
+		updatedAt, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+		update := bson.D{
+			{Key: "$set", Value: bson.D{
+				{Key: "wrapped_key", Value: wrappedKey},
+				{Key: "updated_at", Value: updatedAt},
+			}},
+		}
 
-        upsert := true
+		upsert := true
 
-        opt := options.UpdateOptions{
-            Upsert: &upsert,
-        }
-        _, err = patientExerciseCollection.UpdateOne(
-            ctx,
-            bson.M{"patient_exercise_id": patientExerciseID},
-            update,
-            &opt,
-        )
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update patient exercise with wrapped key"})
-            return
-        }
+		opt := options.UpdateOptions{
+			Upsert: &upsert,
+		}
+		_, err = patientExerciseCollection.UpdateOne(
+			ctx,
+			bson.M{"patient_exercise_id": patientExerciseID},
+			update,
+			&opt,
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update patient exercise with wrapped key"})
+			return
+		}
 
-        c.JSON(http.StatusOK, gin.H{"upload_url": signedURL})
-    }
+		c.JSON(http.StatusOK, gin.H{"upload_url": presignedURL.URL})
+	}
 }
 
 func UploadRecording() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 		defer cancel()
 
 		patientExerciseID := c.Param("patient_exercise_id")
@@ -127,37 +123,37 @@ func UploadRecording() gin.HandlerFunc {
 			return
 		}
 
-		c.Request.ParseMultipartForm(100 << 20) // 100 MB
+		err = c.Request.ParseMultipartForm(100 << 20) // 100 MB
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse multipart form"})
+			return
+		}
+
 		file, handler, err := c.Request.FormFile("file")
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Error occurred while uploading file"})
 			return
 		}
 		defer file.Close()
+
 		fmt.Printf("Uploaded File: %+v\n", handler.Filename)
 		fmt.Printf("File Size: %+v\n", handler.Size)
 		fmt.Printf("MIME Header: %+v\n", handler.Header)
 
 		fileExtension := strings.Split(handler.Filename, ".")[1]
 
-		sess := helpers.GetS3Session()
-		uploader := s3manager.NewUploader(sess)
+		// Key should be recordings/patientExerciseID.extension
+		key := fmt.Sprintf("recordings/%s.%s", patientExerciseID, fileExtension)
 
 		// Upload the file to S3
-		result, err := uploader.Upload(&s3manager.UploadInput{
-			Bucket: aws.String("peakspeak"),
-			// Key should be videos/userID.timestamp.extension
-			Key:  aws.String(fmt.Sprintf("recordings/%s.%s", patientExerciseID, fileExtension)),
-			Body: file,
-			ACL:  aws.String("public-read"), // Set the ACL to public-read
-		})
+		err = helpers.UploadFileToS3(ctx, helpers.GetS3Client(), "peakspeak", key, file)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to upload file, %v", err)})
 			return
 		}
 
 		videoURL := fmt.Sprintf("https://peakspeak.nyc3.cdn.digitaloceanspaces.com/recordings/%s.%s", patientExerciseID, fileExtension)
-		updatedAt, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+		updatedAt := time.Now().Format(time.RFC3339)
 		update := bson.D{
 			{Key: "$set", Value: bson.D{
 				{Key: "recording", Value: videoURL},
@@ -168,11 +164,11 @@ func UploadRecording() gin.HandlerFunc {
 
 		_, err = patientExerciseCollection.UpdateOne(ctx, bson.M{"patient_exercise_id": patientExerciseID}, update)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error while updating profile image"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error while updating patient exercise recording"})
 			return
 		}
 
-		fmt.Printf("File uploaded to, %s\n", aws.StringValue(&result.Location))
+		fmt.Printf("File uploaded to, %s\n", videoURL)
 
 		c.JSON(http.StatusOK, gin.H{"message": "File uploaded successfully", "location": videoURL})
 	}

@@ -1,62 +1,76 @@
 package helpers
 
 import (
-    "log"
-    "os"
+	"context"
+	"log"
+	"mime/multipart"
+	"os"
 
-    "github.com/aws/aws-sdk-go/aws"
-    "github.com/aws/aws-sdk-go/aws/credentials"
-    "github.com/aws/aws-sdk-go/aws/session"
-    // "github.com/joho/godotenv"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	// "github.com/joho/godotenv"
 )
 
-var s3Session *session.Session
-var kmsSession *session.Session
+// Global session variables
+var s3Client *s3.Client
+var kmsClient *kms.Client
 
 func init() {
-    // err := godotenv.Load()
-    // if err != nil {
-    //     log.Fatalf("Error loading .env file")
-    // }
+	// err := godotenv.Load()
+	// if err != nil {
+	//     log.Fatalf("Error loading .env file")
+	// }
 
-    key := os.Getenv("SPACES_KEY")
-    secret := os.Getenv("SPACES_SECRET")
+	// Load environment variables
+	key := os.Getenv("SPACES_KEY")
+	secret := os.Getenv("SPACES_SECRET")
 	awsKey := os.Getenv("AWS_ACCESS")
 	awsSecret := os.Getenv("AWS_SECRET")
 
-    // Setup DigitalOcean Spaces session
-    s3Config := &aws.Config{
-        Credentials:      credentials.NewStaticCredentials(key, secret, ""),
-        Endpoint:         aws.String("https://nyc3.digitaloceanspaces.com"),
-        Region:           aws.String("us-east-1"),
-        S3ForcePathStyle: aws.Bool(false),
-    }
+	// Setup DigitalOcean Spaces session
+	s3Cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("us-east-1"),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(key, secret, "")),
+	)
+	if err != nil {
+		log.Fatalf("Error creating S3 session: %s", err)
+	}
 
-    newS3Session, err := session.NewSession(s3Config)
-    if err != nil {
-        log.Fatalf("Error creating S3 session: %s", err)
-    }
-    s3Session = newS3Session
-    log.Print("S3 session created")
+	// Customize S3 endpoint for DigitalOcean Spaces
+	s3Client = s3.NewFromConfig(s3Cfg, func(o *s3.Options) {
+		o.EndpointResolver = s3.EndpointResolverFromURL("https://nyc3.digitaloceanspaces.com")
+	})
 
-    // Setup AWS KMS session
-    kmsConfig := &aws.Config{
-		Credentials: credentials.NewStaticCredentials(awsKey, awsSecret, ""),
-        Region: aws.String("us-east-2"), // KMS key region
-    }
+	// Setup AWS KMS session
+	kmsCfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("us-east-2"),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(awsKey, awsSecret, "")),
+	)
+	if err != nil {
+		log.Fatalf("Error creating KMS session: %s", err)
+	}
 
-    newKMSSession, err := session.NewSession(kmsConfig)
-    if err != nil {
-        log.Fatalf("Error creating KMS session: %s", err)
-    }
-    kmsSession = newKMSSession
-    log.Print("KMS session created")
+	kmsClient = kms.NewFromConfig(kmsCfg)
+	log.Print("S3 and KMS sessions created")
 }
 
-func GetS3Session() *session.Session {
-    return s3Session
+func GetS3Client() *s3.Client {
+	return s3Client
 }
 
-func GetKMSSession() *session.Session {
-    return kmsSession
+func GetKMSClient() *kms.Client {
+	return kmsClient
+}
+
+func UploadFileToS3(ctx context.Context, s3Client *s3.Client, bucket string, key string, file multipart.File) error {
+	_, err := s3Client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   file,
+		ACL:    "public-read", // Set the ACL to public-read
+	})
+	return err
 }

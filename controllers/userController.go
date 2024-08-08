@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -26,41 +24,38 @@ var userCollection *mongo.Collection = database.OpenCollection(database.Client, 
 
 func UploadProfile() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel()
 
 		userID := c.Param("user_id")
 		var user models.User
+
 		err := userCollection.FindOne(ctx, bson.M{"user_id": userID}).Decode(&user)
-		defer cancel()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
 			return
 		}
 
-		c.Request.ParseMultipartForm(10 << 20) // 10 MB
+		err = c.Request.ParseMultipartForm(10 << 20) // 10 MB
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse multipart form"})
+			return
+		}
+
 		file, handler, err := c.Request.FormFile("file")
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Error occurred while uploading file"})
 			return
 		}
 		defer file.Close()
-		fmt.Printf("Uploaded File: %+v\n", handler.Filename)
-		fmt.Printf("File Size: %+v\n", handler.Size)
-		fmt.Printf("MIME Header: %+v\n", handler.Header)
-		// split file name by period and get the last element which is the extension
+
 		fileExtension := strings.Split(handler.Filename, ".")[1]
 
-		sess := helpers.GetS3Session()
-		uploader := s3manager.NewUploader(sess)
+		// Key should be profile/userID.extension
+		key := fmt.Sprintf("profile/%s.%s", userID, fileExtension)
 
 		// Upload the file to S3
-		result, err := uploader.Upload(&s3manager.UploadInput{
-			Bucket: aws.String("peakspeak"),
-			// Key should be profile/userID.extension
-			Key:  aws.String("profile/" + userID + "." + fileExtension),
-			Body: file,
-			ACL:  aws.String("public-read"), // Set the ACL to public-read
-		})
+		err = helpers.UploadFileToS3(ctx, helpers.GetS3Client(), "peakspeak", key, file)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to upload file, %v", err)})
 			return
@@ -82,8 +77,6 @@ func UploadProfile() gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error while updating profile image"})
 			return
 		}
-
-		fmt.Printf("File uploaded to, %s\n", aws.StringValue(&result.Location))
 
 		c.JSON(http.StatusOK, gin.H{"message": "File uploaded successfully", "location": profileImageURL})
 	}
