@@ -44,78 +44,74 @@ func wrapKey(key, kmsKeyID string) (string, error) {
 }
 
 func GetUploadURL() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
-		defer cancel()
+    return func(c *gin.Context) {
+        var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+        defer cancel()
 
-		patientExerciseID := c.Param("patient_exercise_id")
+        patientExerciseID := c.Param("patient_exercise_id")
 
-		type RequestBody struct {
-			AESKey string `json:"aes_key"`
-		}
+        type RequestBody struct {
+            AESKey string `json:"aes_key"`
+        }
 
-		var requestBody RequestBody
-		if err := c.BindJSON(&requestBody); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
-			return
-		}
+        var requestBody RequestBody
+        if err := c.BindJSON(&requestBody); err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+            return
+        }
 
-		// Wrap the AES key using AWS KMS
-		kmsKeyID := os.Getenv("KMS_KEY_ID")
-		wrappedKey, err := wrapKey(requestBody.AESKey, kmsKeyID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to wrap encryption key"})
-			return
-		}
+        // Wrap the AES key using AWS KMS
+        kmsKeyID := os.Getenv("KMS_KEY_ID")
+        wrappedKey, err := wrapKey(requestBody.AESKey, kmsKeyID)
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to wrap encryption key"})
+            return
+        }
 
-		// Generate signed URL with necessary headers
-		sess := helpers.GetS3Session()
-		svc := s3.New(sess)
+        // Generate signed URL with necessary headers
+        sess := helpers.GetS3Session()
+        svc := s3.New(sess)
 
-		req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
-			Bucket: aws.String("peakspeak"),
-			Key:    aws.String(fmt.Sprintf("recordings/%s.mp4", patientExerciseID)),
-			ACL:    aws.String("private"),
-		})
+        req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
+            Bucket: aws.String("peakspeak"),
+            Key:    aws.String(fmt.Sprintf("recordings/%s.mp4", patientExerciseID)),
+            ACL:    aws.String("private"),
+        })
 
-		// Add headers that should be signed
-		req.HTTPRequest.Header.Set("x-amz-acl", "private") // Example of including the ACL in the signed headers
-		req.HTTPRequest.Header.Set("host", "peakspeak.nyc3.digitaloceanspaces.com")
+        // Generate the signed URL
+        signedURL, err := req.Presign(15 * time.Minute)
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate signed URL"})
+            return
+        }
 
-		// Generate the signed URL
-		signedURL, err := req.Presign(15 * time.Minute)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate signed URL"})
-			return
-		}
+        // Store the wrapped key and other metadata
+        updatedAt, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+        update := bson.D{
+            {Key: "$set", Value: bson.D{
+                {Key: "wrapped_key", Value: wrappedKey},
+                {Key: "updated_at", Value: updatedAt},
+            }},
+        }
 
-		// Store the wrapped key and other metadata
-		updatedAt, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
-		update := bson.D{
-			{Key: "$set", Value: bson.D{
-				{Key: "wrapped_key", Value: wrappedKey},
-				{Key: "updated_at", Value: updatedAt},
-			}},
-		}
+        upsert := true
 
-		upsert := true
+        opt := options.UpdateOptions{
+            Upsert: &upsert,
+        }
+        _, err = patientExerciseCollection.UpdateOne(
+            ctx,
+            bson.M{"patient_exercise_id": patientExerciseID},
+            update,
+            &opt,
+        )
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update patient exercise with wrapped key"})
+            return
+        }
 
-		opt := options.UpdateOptions{
-			Upsert: &upsert,
-		}
-		_, err = patientExerciseCollection.UpdateOne(
-			ctx,
-			bson.M{"patient_exercise_id": patientExerciseID},
-			update,
-			&opt,
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update patient exercise with wrapped key"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"upload_url": signedURL})
-	}
+        c.JSON(http.StatusOK, gin.H{"upload_url": signedURL})
+    }
 }
 
 func UploadRecording() gin.HandlerFunc {
