@@ -42,7 +42,31 @@ func wrapKey(key, kmsKeyID string) (string, error) {
 	return base64.StdEncoding.EncodeToString(result.CiphertextBlob), nil
 }
 
-func GetUploadURL() gin.HandlerFunc {
+func unwrapKey(wrappedKey, kmsKeyID string) (string, error) {
+	kmsClient := helpers.GetKMSClient()
+
+	ciphertextBlob, err := base64.StdEncoding.DecodeString(wrappedKey)
+	if err != nil {
+		log.Printf("Error decoding wrapped key: %v", err)
+		return "", err
+	}
+
+	input := &kms.DecryptInput{
+		KeyId:             aws.String(kmsKeyID),
+		CiphertextBlob:    ciphertextBlob,
+		EncryptionContext: nil, // Add encryption context if used during wrapping
+	}
+
+	result, err := kmsClient.Decrypt(context.Background(), input)
+	if err != nil {
+		log.Printf("Error decrypting key: %v", err)
+		return "", err
+	}
+
+	return string(result.Plaintext), nil
+}
+
+func RecordingPresignPost() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		s3Client := helpers.GetS3Client()
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
@@ -87,6 +111,7 @@ func GetUploadURL() gin.HandlerFunc {
 			{Key: "$set", Value: bson.D{
 				{Key: "wrapped_key", Value: wrappedKey},
 				{Key: "updated_at", Value: updatedAt},
+				{Key: "status", Value: "completed"},
 			}},
 		}
 
@@ -107,6 +132,51 @@ func GetUploadURL() gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{"upload_url": presignedURL.URL})
+	}
+}
+
+func GetRecordingPresignURL() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		s3Client := helpers.GetS3Client()
+		kmsKeyID := os.Getenv("KMS_KEY_ID")
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel()
+
+		patientExerciseID := c.Param("patient_exercise_id")
+
+		// Retrieve the wrapped key and other metadata from your database
+		var patientExercise models.PatientExercise
+		err := patientExerciseCollection.FindOne(ctx, bson.M{"patient_exercise_id": patientExerciseID}).Decode(&patientExercise)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Patient exercise not found"})
+			return
+		}
+
+		// Unwrap the AES key using AWS KMS
+		unwrappedKey, err := unwrapKey(patientExercise.WrappedKey, kmsKeyID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unwrap encryption key"})
+			return
+		}
+
+		// Generate a pre-signed URL for the GET request
+		presignClient := s3.NewPresignClient(s3Client)
+
+		presignedURL, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String("peakspeak"),
+			Key:    aws.String(fmt.Sprintf("recordings/%s.mp4", patientExerciseID)),
+		}, s3.WithPresignExpires(15*time.Minute))
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate signed URL"})
+			return
+		}
+
+		// Return the pre-signed URL and the unwrapped AES key for downloading and decrypting the video
+		c.JSON(http.StatusOK, gin.H{
+			"download_url": presignedURL.URL,
+			"aes_key":      unwrappedKey,
+		})
 	}
 }
 

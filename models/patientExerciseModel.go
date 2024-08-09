@@ -15,4 +15,5 @@ type PatientExercise struct {
 	CreatedAt         time.Time          `json:"created_at" bson:"created_at"`
 	UpdatedAt         time.Time          `json:"updated_at" bson:"updated_at"`
 	PatientExerciseID string             `json:"patient_exercise_id" bson:"patient_exercise_id"`
+	WrappedKey 	  	  string             `json:"wrapped_key" bson:"wrapped_key"`
 }

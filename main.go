@@ -6,16 +6,11 @@ import (
 	// "log"
 	"os"
 
-	// "github.com/aws/aws-sdk-go/aws"
-	// "github.com/aws/aws-sdk-go/aws/credentials"
-	// "github.com/aws/aws-sdk-go/aws/session"
-	// "github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	// "github.com/joho/godotenv"
 )
 
-// var exerciseCollection *mongo.Collection = database.OpenCollection(database.Client, "exercise")
 
 // func init() {
 // 	err := godotenv.Load()
@@ -53,7 +48,6 @@ func main() {
 
 	// Private routes
 	privateRoutes := router.Group("/")
-	// privateRoutes.Use(middleware.Authentication())
 	{
 		routes.UserRoutes(privateRoutes)
 		routes.ExerciseRoutes(privateRoutes)
