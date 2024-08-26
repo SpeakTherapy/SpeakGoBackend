@@ -328,27 +328,65 @@ func DeleteUser() gin.HandlerFunc {
 			return
 		}
 
-		objID, err := primitive.ObjectIDFromHex(userID)
+		var user models.User
+		err := userCollection.FindOne(ctx, bson.M{"user_id": userID}).Decode(&user)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid User ID"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
 			return
 		}
 
-		filter := bson.M{"_id": objID}
-
-		result, err := userCollection.DeleteOne(ctx, filter)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error occurred while deleting the user"})
-			return
+		if user.Role == "patient" {
+			err = deletePatientAndExercises(ctx, user.UserID)
+		} else if user.Role == "therapist" {
+			err = deleteTherapistAndPatients(ctx, user.UserID, user.ReferenceCode)
 		}
 
-		if result.DeletedCount == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error while deleting user"})
 			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{"message": "User deleted successfully"})
 	}
+}
+
+func deletePatientAndExercises(ctx context.Context, userID string) error {
+	// Delete patient from user collection
+	_, err := userCollection.DeleteOne(ctx, bson.M{"user_id": userID})
+	if err != nil {
+		return err
+	}
+
+	// Delete exercises associated with the patient
+	_, err = patientExerciseCollection.DeleteMany(ctx, bson.M{"patient_id": userID})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func deleteTherapistAndPatients(ctx context.Context, therapistID string, referenceCode string) error {
+	// Delete therapist from user collection
+	_, err := userCollection.DeleteOne(ctx, bson.M{"user_id": therapistID})
+	if err != nil {
+		return err
+	}
+
+	// Unlink patients associated with the therapist
+    _, err = userCollection.UpdateMany(ctx, bson.M{"reference_code": referenceCode}, bson.M{"$unset": bson.M{"reference_code": ""}})
+	if err != nil {
+		return err
+	}
+
+	// Delete all associated patient exercises
+	_, err = patientExerciseCollection.DeleteMany(ctx, bson.M{"therapist_id": therapistID})
+	if err != nil {
+		return err
+	}
+
+	return nil
+
 }
 
 func RefreshToken() gin.HandlerFunc {
